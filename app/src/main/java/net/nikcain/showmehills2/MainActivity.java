@@ -5,27 +5,28 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.database.SQLException;
 import android.graphics.Matrix;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.util.Log;
+import android.util.SizeF;
 import android.view.Display;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
-import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Toast;
-import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
@@ -52,27 +53,22 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
     float[] mGravity;
     float[] mGeomagnetic;
 
+    boolean lockcompass = false;
+
     Timer timer;
-    private int GPSretryTime = 60;
-    private int CompassSmoothingWindow = 50;
+    private final int GPSretryTime = 60;
+    private final int CompassSmoothingWindow = 50;
 
     //private Location curLocation;
     String acc = "";
     boolean badsensor = false;
-    boolean isCalibrated = true;
     double calibrationStep = -1;
     float compassAdjustment = 0;
-
-    private float pinchdist = 0;
-
-    float mRotationMatrixA[] = new float[9];
-    float mRotationMatrixB[] = new float[9];
-    float mOrientationVector[] = new float[9];
-    float mAzimuthVector[] = new float[4];
+    float[] mRotationMatrixA = new float[9];
+    float[] mRotationMatrixB = new float[9];
     float mDeclination = 0;
     private boolean mHasAccurateGravity = false;
     private boolean mHasAccurateAccelerometer = false;
-
     public int scrwidth = 10;
     public int scrheight = 10;
     public HillCanvas hc;
@@ -81,12 +77,8 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
     public filteredElevation fe = new filteredElevation();
 
     // preferences
-    Float maxdistance = 30f;
-
     boolean typeunits = false; // true for metric, false for imperial
     boolean showheight = false;
-    boolean showhelp = true;
-    String uniqueID = "nothere";
 
 
     public int GetRotation()
@@ -97,44 +89,9 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         return rot;
     }
 
-    private void getPrefs() {
-        // Get the xml/preferences.xml preferences
-   /*     SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-        String md = prefs.getString("distance", ""+maxdistance);
-        if (md == "") md = "30.0";
-        maxdistance = Float.parseFloat(md);
-        String ts = prefs.getString("textsize", ""+textsize);
-        if (ts == "") ts = "25.0";
-        textsize = Float.parseFloat(ts);
-
-        showdir = prefs.getBoolean("showdir", false);
-        showdist = prefs.getBoolean("showdist", false);
-        showheight = prefs.getBoolean("showalt", false);
-        typeunits = prefs.getString("distunits", "metric").equalsIgnoreCase("metric");
-        isCalibrated = prefs.getBoolean("isCalibrated", false);
-        hfov = prefs.getFloat("hfov", (float) 50.2);
-        compassAdjustment = prefs.getFloat("compassAdjustment", 0);
-        showhelp = prefs.getBoolean("showhelp", true);
-        CompassSmoothingWindow = Integer.parseInt(prefs.getString("smoothing", "50"));
-        uniqueID = prefs.getString("uniqueID", "nothere");
-        if (uniqueID == "nothere")
-        {
-            uniqueID = UUID.randomUUID().toString();
-
-            SharedPreferences.Editor editor = prefs.edit();
-            editor.putString("uniqueID", uniqueID);
-            editor.commit();
-
-        }
-        */
-
-    }
-
     @Override
     protected void onResume() {
         Log.d("showmehills", "onResume");
-
-        getPrefs();
 
         fd = new filteredDirection();
         fe = new filteredElevation();
@@ -151,11 +108,7 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         timer = new Timer();
         timer.scheduleAtFixedRate(new LocationTimerTask(),GPSretryTime* 1000,GPSretryTime* 1000);
         UpdateMarkers();
-        try {
-            myDbHelper.checkDataBase();
-        }catch(SQLException sqle){
-            throw sqle;
-        }
+        myDbHelper.checkDataBase();
     }
 
     @Override
@@ -167,29 +120,42 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         mSensorManager.unregisterListener((SensorEventListener) this);
 
         super.onPause();
-        try {
-            myDbHelper.close();
-        }catch(SQLException sqle){
-            throw sqle;
-        }
+        myDbHelper.close();
 
     }
     @Override
     protected void onStop()
     {
-        try {
-            mGPS.switchOff();
-            if (timer != null)
-            {
-                timer.cancel();
-                timer = null;
-            }
-            mSensorManager.unregisterListener((SensorEventListener)this);
-            myDbHelper.close();
-        }catch(SQLException sqle){
-            throw sqle;
+        mGPS.switchOff();
+        if (timer != null)
+        {
+            timer.cancel();
+            timer = null;
         }
+        mSensorManager.unregisterListener((SensorEventListener)this);
+        myDbHelper.close();
         super.onStop();
+    }
+
+    private void calculateFOV(CameraManager cManager) {
+        try {
+            for (final String cameraId : cManager.getCameraIdList()) {
+                CameraCharacteristics characteristics = cManager.getCameraCharacteristics(cameraId);
+                int cOrientation = characteristics.get(CameraCharacteristics.LENS_FACING);
+                if (cOrientation == CameraCharacteristics.LENS_FACING_BACK) {
+                    float[] maxFocus = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                    SizeF size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+                    assert size != null;
+                    float w = size.getWidth();
+                    float h = size.getHeight();
+                    assert maxFocus != null;
+                    hfov = (float) ((2*Math.atan(w/(maxFocus[0]*2))) * (180.0/Math.PI));
+                    vfov = (float) ((2*Math.atan(h/(maxFocus[0]*2))) * (180.0/Math.PI));
+                }
+            }
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -214,8 +180,6 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         checkPermission(Manifest.permission.CAMERA, CAMERA_PERMISSION_CODE);
         checkPermission(Manifest.permission.ACCESS_COARSE_LOCATION, COARSE_LOCATION_PERMISSION_CODE);
         checkPermission(Manifest.permission.ACCESS_FINE_LOCATION, FINE_LOCATION_PERMISSION_CODE);
-
-
 
         mGPS = new RapidGPSLock((IShowMeHillsActivity) this);
         mGPS.switchOn();
@@ -243,23 +207,10 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
 
         hc = findViewById(R.id.canvas_overlay);
         hc.setvars(this);
-       // cv = new CameraPreviewSurface( this.getApplicationContext(), this);
-       // FrameLayout rl = new FrameLayout( this.getApplicationContext());
-       // setContentView(rl);
+        hc.setOnTouchListener(this);
+        CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        calculateFOV( manager );
 
-        // mDraw = new DrawOnTop(this);
-        // addContentView(mDraw, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
-
-        // rl.addView(cv);
-        // cv.setOnTouchListener((OnTouchListener) this);
-   /*     SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-        if (prefs.getBoolean("showhelp", true))
-        {
-            Intent myHelpIntent = new Intent(getBaseContext(), Help.class);
-            startActivityForResult(myHelpIntent, 0);
-        }
-
-    */
     }
 
     @Override
@@ -269,45 +220,6 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         inflater.inflate(R.menu.preferences_menu, menu);
 
         return super.onCreateOptionsMenu(menu);
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle all of the possible menu actions.
-        /*
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-        SharedPreferences.Editor editor = prefs.edit();
-        if (item.getItemId() == R.id.preferences_menutitem) {
-            Intent settingsActivity = new Intent(getBaseContext(),AppPreferences.class);
-            startActivity(settingsActivity);
-        } else if (item.getItemId() == R.id.mapoverlay) {
-            Location curLocation = mGPS.getCurrentLocation();
-            if (curLocation != null)
-            {
-                myDbHelper.SetDirections(curLocation);
-                editor.putFloat("longitude", (float)curLocation.getLongitude());
-                editor.putFloat("latitude", (float)curLocation.getLatitude());
-                editor.commit();
-            }
-            Intent myIntent = new Intent(getBaseContext(), MapOverlay.class);
-            startActivityForResult(myIntent, 0);
-        } else if (item.getItemId() == R.id.help) {
-            Intent myHelpIntent = new Intent(getBaseContext(), Help.class);
-            startActivityForResult(myHelpIntent, 0);
-        } else if (item.getItemId() == R.id.about) {
-            Intent myAboutIntent = new Intent(getBaseContext(), About.class);
-            startActivityForResult(myAboutIntent, 0);
-        } else if (item.getItemId() == R.id.exit) {
-            finish();
-        } else if (item.getItemId() == R.id.fovcalibrate) {
-            calibrationStep = -1;
-            isCalibrated = false;
-            editor.putBoolean("isCalibrated", false);
-            editor.commit();
-        }
-
-         */
-        return super.onOptionsItemSelected(item);
     }
 
     public void UpdateMarkers()
@@ -322,8 +234,8 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
     class filteredDirection
     {
         double dir;
-        double sinevalues[] = new double[CompassSmoothingWindow];
-        double cosvalues[] = new double[CompassSmoothingWindow];
+        double[] sinevalues = new double[CompassSmoothingWindow];
+        double[] cosvalues = new double[CompassSmoothingWindow];
         int index = 0;
         int outlierCount = 0;
 
@@ -376,12 +288,12 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         }
     }
 
-    class filteredElevation
+    static class filteredElevation
     {
         int AVERAGINGWINDOW = 10;
         double dir;
-        double sinevalues[] = new double[AVERAGINGWINDOW];
-        double cosvalues[] = new double[AVERAGINGWINDOW];
+        double[] sinevalues = new double[AVERAGINGWINDOW];
+        double[] cosvalues = new double[AVERAGINGWINDOW];
         int index = 0;
         void AddLatest( double d )
         {
@@ -464,63 +376,25 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
                 float[] dv = new float[3];
                 SensorManager.getOrientation(rotationMatrixB, dv);
 
-                fd.AddLatest(dv[0]);
-                fe.AddLatest((double)dv[1]);
+                if (!lockcompass) {
+                    fd.AddLatest(dv[0]);
+                    fe.AddLatest((double) dv[1]);
+                }
             }
             hc.invalidate();
         }
     }
 
     public boolean onTouch(View v, MotionEvent event) {
-        if (!isCalibrated)
-        {
-            // this is the standard FOV calibration
-            if (calibrationStep == -1)
-            {
-                calibrationStep = fd.getDirection();
-
-                Log.d("showmehills", "1st cal pt="+calibrationStep);
-            }
-            else
-            {
-                double curdir = fd.getDirection();
-                if (calibrationStep - curdir < 0) calibrationStep += 360;
-                hfov = (float)(calibrationStep - curdir);
-                Log.d("showmehills", "2nd cal pt="+curdir);
-                Log.d("showmehills", "Setting hfov calibration="+hfov);
-                isCalibrated = true;
-                calibrationStep = 0;
-             //   SharedPreferences customSharedPreference = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-             //   SharedPreferences.Editor editor = customSharedPreference.edit();
-             //   editor.putFloat("hfov", hfov);
-             //   editor.putBoolean("isCalibrated", true);
-             //   editor.commit();
-            }
-            return false;
-        }
-        // check if it's multi-touch for pinch control of FOV
-		/*
-       if (event.getPointerCount() > 1)
-       {
-    	   // multi-touch
-    	   float x = event.getX(0) - event.getX(1);
-    	   float y = event.getY(0) - event.getY(1);
-    	   if (pinchdist > 0)
-    	   {
-    		   float delta = pinchdist - FloatMath.sqrt(x * x + y * y);
-    		   hfov += (delta > 0) ? 1 : -1;
-    	   }
-    	   pinchdist = FloatMath.sqrt(x * x + y * y);
-       }
-       else
-       {
-    	   pinchdist = 0;
-       }
-       */
-        if (event.getX() < scrwidth / 8 &&
-                event.getY() < scrheight / 8)
+        if (event.getX() < (float) scrwidth / 8 &&
+                event.getY() < (float) scrheight / 8)
         {
             openOptionsMenu();
+        }
+        else if (event.getX() > scrwidth - (float) scrwidth / 8 &&
+                event.getY() < (float) scrheight / 8)
+        {
+            lockcompass = !lockcompass;
         }
     /*    else {
             Iterator<HillMarker> itr = mMarkers.iterator();
@@ -547,29 +421,14 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         switch(keyCode)
         {
             case KeyEvent.KEYCODE_VOLUME_UP:
-                compassAdjustment+=0.1;
+                compassAdjustment+= 0.1F;
                 return true;
             case KeyEvent.KEYCODE_VOLUME_DOWN:
-                compassAdjustment-=0.1;
+                compassAdjustment-= 0.1F;
                 return true;
         }
 
         return super.onKeyDown(keyCode, event);
-    }
-
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-  /*      if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN  )
-        {
-            SharedPreferences customSharedPreference = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-            SharedPreferences.Editor editor = customSharedPreference.edit();
-            editor.putFloat("compassAdjustment", compassAdjustment);
-            editor.commit();
-            return true;
-        }
-
-   */
-        return super.onKeyUp(keyCode, event);
     }
 
     class LocationTimerTask extends TimerTask
@@ -595,27 +454,7 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         if (typeunits) return (int)distance + "m";
         else return (int)(distance*3.2808399) + "ft";
     }
-/*
-    @Override
-    protected void onCreate(@Nullable Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
-        cameraProviderFuture.addListener(() -> {
-            try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                bindPreview(cameraProvider);
-            } catch (ExecutionException | InterruptedException e) {
-                // No errors need to be handled for this Future.
-                // This should never be reached.
-            }
-        }, ContextCompat.getMainExecutor(this));
-
-        checkPermission(Manifest.permission.CAMERA, CAMERA_PERMISSION_CODE);
-    }
-
- */
     void bindPreview(@NonNull ProcessCameraProvider cameraProvider) {
         Preview preview = new Preview.Builder().build();
 
@@ -625,16 +464,13 @@ public class MainActivity extends AppCompatActivity implements IShowMeHillsActiv
         PreviewView previewView = findViewById(R.id.previewView);
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-        Camera camera = cameraProvider.bindToLifecycle((LifecycleOwner)this, cameraSelector, preview);
+        cameraProvider.bindToLifecycle((LifecycleOwner)this, cameraSelector, preview);
     }
     public void checkPermission(String permission, int requestCode)
     {
         // Checking if permission is not granted
         if (ContextCompat.checkSelfPermission(MainActivity.this, permission) == PackageManager.PERMISSION_DENIED) {
             ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
-        }
-        else {
-            //Toast.makeText(MainActivity.this, "Permission already granted", Toast.LENGTH_SHORT).show();
         }
     }
     // This function is called when user accept or decline the permission.

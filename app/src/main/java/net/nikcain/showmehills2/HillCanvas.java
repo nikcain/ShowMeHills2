@@ -27,14 +27,15 @@ public final class HillCanvas extends View {
     public int mMainTextSize = 35;
     boolean showdir = false;
     boolean showdist = false;
-    private Paint strokePaint = new Paint();
-    private Paint textPaint = new Paint();
-    private Paint paint = new Paint();
-    private Paint transpRedPaint = new Paint();
-    private Paint variationPaint = new Paint();
-
-    private Paint settingPaint = new Paint();
-    private Paint settingPaint2 = new Paint();
+    private final Paint strokePaint = new Paint();
+    private final Paint textPaint = new Paint();
+    private final Paint paint = new Paint();
+    private final Paint transpRedPaint = new Paint();
+    private final Paint variationPaint = new Paint();
+    private final Paint redpaint = new Paint();
+    private final Paint greenpaint = new Paint();
+    private final Paint settingPaint = new Paint();
+    private final Paint settingPaint2 = new Paint();
 
     int subwidth;
     int subheight;
@@ -44,22 +45,22 @@ public final class HillCanvas extends View {
     RectF fovrect;
 
 
-    class tmpHill {
+    static class tmpHill {
         Hills h;
         double ratio;
         int toppt;
-    };
+    }
 
     ArrayList<tmpHill> hillsToPlot;
 
-    public class HillMarker {
+    public static class HillMarker {
 
         public HillMarker(int id, Rect loc) { location = loc; hillid=id; }
         public Rect location;
         public int hillid;
     }
 
-    ArrayList<HillMarker> mMarkers = new ArrayList<HillMarker>();
+    ArrayList<HillMarker> mMarkers = new ArrayList<>();
     MainActivity mainact;
     Context mycontext;
     public HillCanvas(Context context, AttributeSet attrs)  {
@@ -70,30 +71,7 @@ public final class HillCanvas extends View {
 
     public void setvars(MainActivity _mainactivity)
     {
-
         mainact = _mainactivity;
-/*
-        CameraManager manager = (CameraManager) mycontext.getSystemService(Context.CAMERA_SERVICE);
-        try {
-            for (String cameraId : manager.getCameraIdList()) {
-                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
-                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    continue;
-                }
-                float[] focus_lengths = characteristics.get(characteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS  );
-                SizeF physize = characteristics.get(characteristics.SENSOR_INFO_PHYSICAL_SIZE);
-                float hypot = (float) Math.sqrt(physize.getHeight() * physize.getHeight() + physize.getWidth() * physize.getWidth());
-                double efl = focus_lengths[0] * hypot;
-                mainact.hfov = (float) (2 * Math.atan(hypot / 2 * efl));
-                int test =1;
-            }
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        } catch (NullPointerException e) {
-        }
-
- */
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setTypeface(Typeface.DEFAULT_BOLD);
         textPaint.setStrokeWidth(4);
@@ -103,6 +81,8 @@ public final class HillCanvas extends View {
         strokePaint.setStrokeWidth(10);
 
         paint.setARGB(255, 255, 255, 255);
+        redpaint.setARGB(255,255,0,0);
+        greenpaint.setARGB(255,0,255,0);
         transpRedPaint.setARGB(100,255,0,0);
 
         subwidth = (int)(mainact.scrwidth*0.7);
@@ -111,17 +91,12 @@ public final class HillCanvas extends View {
         txtgap = gap+(subwidth/30);
         vtxtgap = (int)(subheight / 10);
 
-        hillsToPlot = new ArrayList<tmpHill>();
+        hillsToPlot = new ArrayList<>();
         fovrect = new RectF(gap,vtxtgap,mainact.scrwidth-gap,vtxtgap*11);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if (!mainact.isCalibrated)
-        {
-            drawCalibrationInstructions(canvas);
-            return;
-        }
 
         ArrayList<Hills> localhills = mainact.myDbHelper.localhills;
 
@@ -133,13 +108,15 @@ public final class HillCanvas extends View {
 
         drawLocationAndOrientationStatus(canvas);
 
+        drawCompassLock(canvas);
+
         //drawSettingsButton(canvas);
 
         super.onDraw(canvas);
     }
 
     private int calculateHillsCanFitOnCanvas(int topPt, ArrayList<Hills> localhills) {
-        Float drawtextsize = textsize;
+        float drawtextsize = textsize;
         hillsToPlot.clear();
         mMarkers.clear();
         for (int h = 0; h < localhills.size() && topPt > 0; h++)
@@ -177,7 +154,7 @@ public final class HillCanvas extends View {
                 th.toppt = topPt;
                 hillsToPlot.add(th);
 
-                topPt -= (showdir || showdist || mainact.showheight && th.h.height > 0)?(1 + drawtextsize*2):drawtextsize;
+                topPt -= (int) ((showdir || showdist || mainact.showheight && th.h.height > 0)?(1 + drawtextsize*2):drawtextsize);
 
                 if (drawtextsize - TEXT_SIZE_DECREMENT >= TEXT_SIZE_MIN)
                 {
@@ -188,7 +165,7 @@ public final class HillCanvas extends View {
 
         // Fudge-factor because we don't know exactly how high label text will display until we draw it later.
         // A tiny font at the top needs to be moved down slightly to avoid being clipped; larger fonts seem OK.
-        topPt -= Math.max(0, 13 - drawtextsize);
+        topPt -= (int) Math.max(0, 13 - drawtextsize);
         return topPt;
     }
 
@@ -217,7 +194,7 @@ public final class HillCanvas extends View {
 
     private void drawHillLabelText(Canvas canvas, int toppt) {
         boolean moreinfo;
-        Float drawtextsize = textsize;
+        float drawtextsize = textsize;
         int alpha = ALPHA_LABEL_MAX;
         // draw text over top
         for (int i = 0; i < hillsToPlot.size(); i++)
@@ -234,8 +211,8 @@ public final class HillCanvas extends View {
 
             Rect bnds = new Rect();
             strokePaint.getTextBounds(th.h.hillname,0,th.h.hillname.length(),bnds);
-            bnds.left += xloc - (textPaint.measureText(th.h.hillname) / 2.0);
-            bnds.right += xloc - (textPaint.measureText(th.h.hillname) / 2.0);
+            bnds.left += (int) (xloc - (textPaint.measureText(th.h.hillname) / 2.0));
+            bnds.right += (int) (xloc - (textPaint.measureText(th.h.hillname) / 2.0));
             bnds.top += th.toppt - 5 - toppt;
             if (moreinfo) bnds.top -= drawtextsize;
             bnds.bottom += th.toppt-5 - toppt;
@@ -320,18 +297,18 @@ public final class HillCanvas extends View {
         }
 
         basetext +=" Location " + mainact.acc;
-        canvas.drawText( basetext, mainact.scrwidth/2, mainact.scrheight-70, strokePaint);
-        canvas.drawText( basetext, mainact.scrwidth/2, mainact.scrheight-70, textPaint);
+        canvas.drawText( basetext, (float) mainact.scrwidth /2, mainact.scrheight-70, strokePaint);
+        canvas.drawText( basetext, (float) mainact.scrwidth /2, mainact.scrheight-70, textPaint);
 
         basetext = "";
 
         if (curLocation == null) basetext = "No GPS position yet";
         else if (curLocation.getAccuracy() > 200) basetext = "Warning - GPS position too inaccurate";
 
-        if (basetext != "")
+        if (!basetext.isEmpty())
         {
-            canvas.drawText( basetext, mainact.scrwidth/2, mainact.scrheight/2, strokePaint);
-            canvas.drawText( basetext, mainact.scrwidth/2, mainact.scrheight/2, textPaint);
+            canvas.drawText( basetext, (float) mainact.scrwidth /2, (float) mainact.scrheight /2, strokePaint);
+            canvas.drawText( basetext, (float) mainact.scrwidth /2, (float) mainact.scrheight /2, textPaint);
         }
 
         int va = mainact.fd.GetVariation();
@@ -341,97 +318,22 @@ public final class HillCanvas extends View {
         for (int i = 0; i < 360; i+=15)
         {
             if (i > va) variationPaint.setARGB(255, 0, 255, 0);
-            canvas.drawLine((mainact.scrwidth/10)+(dashlength/5*(float)Math.sin( Math.toRadians(i))),
-                    mainact.scrheight-(mainact.scrheight/5)-(dashlength/5*(float)Math.cos( Math.toRadians(i))),
-                    (mainact.scrwidth/10)+(dashlength*(float)Math.sin( Math.toRadians(i))),
-                    mainact.scrheight-(mainact.scrheight/5)-(dashlength*(float)Math.cos( Math.toRadians(i))),
+            canvas.drawLine(((float) mainact.scrwidth /10)+((float) dashlength /5*(float)Math.sin( Math.toRadians(i))),
+                    mainact.scrheight-((float) mainact.scrheight /5)-((float) dashlength /5*(float)Math.cos( Math.toRadians(i))),
+                    ((float) mainact.scrwidth /10)+(dashlength*(float)Math.sin( Math.toRadians(i))),
+                    mainact.scrheight-((float) mainact.scrheight /5)-(dashlength*(float)Math.cos( Math.toRadians(i))),
                     variationPaint);
         }
     }
 
-    private void drawSettingsButton(Canvas canvas) {
-
-
-        //settingPaint.setStyle(Paint.Style.STROKE);
-        settingPaint2.setStyle(Paint.Style.STROKE);
-        settingPaint.setAntiAlias(true);
-        settingPaint2.setAntiAlias(true);
-        settingPaint2.setStrokeWidth((int)(mainact.scrwidth/100.0));
-        //settingPaint.setStrokeWidth((int)(scrwidth/80.0));
-        settingPaint2.setARGB(255, 255, 255, 255);
-        settingPaint.setARGB(255, 0, 0, 0);
-
-        float barwidth = mainact.scrwidth/12.0f;
-        int startPtw = mainact.scrwidth/60;
-        int startPth = mainact.scrheight/60;
-        int baroffset = mainact.scrwidth/50;
-        canvas.drawRect(0.0f, 0.0f, barwidth + (startPtw*2), baroffset * 3.3f, settingPaint);
-
-        canvas.drawLine(startPtw, startPth, startPtw + barwidth, startPth, settingPaint2);
-
-        canvas.drawLine(startPtw, startPth+baroffset, startPtw + barwidth, startPth+baroffset, settingPaint2);
-        baroffset += baroffset;
-        canvas.drawLine(startPtw, startPth+baroffset, startPtw + barwidth, startPth+baroffset, settingPaint2);
-    }
-
-    private void drawCalibrationInstructions(Canvas canvas) {
-        // adjust text to fit any screen - lol, so hacky :-D
-        boolean happyWithSize = false;
-        do
+    private void drawCompassLock(Canvas canvas)
+    {
+        if (mainact.lockcompass)
         {
-            textPaint.setTextSize(mMainTextSize);
-            float sz = textPaint.measureText("screen, wait for stabilisation, and tap again.");
-            if (sz > mainact.scrwidth*0.7 )
-            {
-                mMainTextSize--;
-            }
-            else if (sz < mainact.scrwidth*0.6)
-            {
-                mMainTextSize++;
-            }
-            else
-            {
-                happyWithSize = true;
-            }
-        } while (!happyWithSize);
-
-        textPaint.setTextAlign(Paint.Align.LEFT);
-        textPaint.setARGB(255, 255, 255, 255);
-        paint.setARGB(100, 0, 0, 0);
-
-        // left, top, right, bottom
-        canvas.drawRoundRect(fovrect, 50,50,paint);
-        canvas.drawText( "To calibrate, view an object at the very", txtgap, vtxtgap*3, textPaint);
-        canvas.drawText( "left edge of the screen, and wait for", txtgap, vtxtgap*4, textPaint);
-        canvas.drawText( "the direction sensor to stabilise. Then", txtgap, vtxtgap*5, textPaint);
-        canvas.drawText( "tap the screen (gently, so you don't move", txtgap, vtxtgap*6, textPaint);
-        canvas.drawText( "the view!). Then turn around until the ", txtgap, vtxtgap*7, textPaint);
-        canvas.drawText( "object is at the very right edge of the ", txtgap, vtxtgap*8, textPaint);
-        canvas.drawText( "screen, wait for stabilisation, and tap again.", txtgap, vtxtgap*9, textPaint);
-
-        canvas.drawText( "Dir: " + (int)mainact.fd.getDirection() + (char)0x00B0 + " SD: "+mainact.fd.GetVariation(), mainact.scrwidth/2, mainact.scrheight-(vtxtgap*2), textPaint);
-
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        if (mainact.calibrationStep == -1)
-        {
-            canvas.drawRect(0,0, 10, mainact.scrheight, transpRedPaint);
+            canvas.drawCircle(mainact.scrwidth - (float) mainact.scrwidth / 16, (float) mainact.scrheight / 16, (float) mainact.scrwidth / 32, redpaint);
         }
-        else
-        {
-            canvas.drawRect(mainact.scrwidth-10,0, mainact.scrwidth, mainact.scrheight, transpRedPaint);
-        }
-        int va = mainact.fd.GetVariation();
-        variationPaint.setARGB(255, 255, 0, 0);
-        variationPaint.setStrokeWidth(4);
-        int dashlength = mainact.scrheight / 10;
-        for (int i = 0; i < 360; i+=15)
-        {
-            if (i > va) variationPaint.setARGB(255, 0, 255, 0);
-            canvas.drawLine((mainact.scrwidth/10)+(dashlength/5*(float)Math.sin( Math.toRadians(i))),
-                    mainact.scrheight-(mainact.scrheight/5)-(dashlength/5*(float)Math.cos( Math.toRadians(i))),
-                    (mainact.scrwidth/10)+(dashlength*(float)Math.sin( Math.toRadians(i))),
-                    mainact.scrheight-(mainact.scrheight/5)-(dashlength*(float)Math.cos( Math.toRadians(i))),
-                    variationPaint);
+        else {
+            canvas.drawCircle(mainact.scrwidth - (float) mainact.scrwidth / 16, (float) mainact.scrheight / 16, (float) mainact.scrwidth / 32, greenpaint);
         }
     }
 }
